@@ -1,0 +1,57 @@
+# ===================================================================
+# General Editor/OS
+# ===================================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ===================================================================
+# Terraform
+#
+# Ignora arquivos de estado, logs, planos e variáveis locais.
+# O arquivo .terraform.lock.hcl NÃO é ignorado para garantir que as
+# versões dos providers sejam consistentes em todos os ambientes,
+# conforme a recomendação da HashiCorp.
+# ===================================================================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ===================================================================
+# Python
+# ===================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.env
+
+# ===================================================================
+# Java
+# ===================================================================
+*.class
+*.log
+*.jar
+*.war
+*.ear
+target/
+build/
+.settings/
+.classpath
+.project
