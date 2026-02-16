@@ -1,6 +1,7 @@
 resource "aws_s3_bucket" "bronze" {
-  bucket = "show-tickets-lake-bronze-${var.bucket_suffix}"
-  tags   = var.tags
+  bucket        = "show-tickets-lake-bronze-${var.bucket_suffix}"
+  force_destroy = true
+  tags          = var.tags
 }
 
 resource "aws_s3_bucket_versioning" "bronze" {
