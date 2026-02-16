@@ -1,0 +1,612 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Data Lake - Sistema de Vendas de Ingressos - Arquitetura Completa Medallion
+
+Resources:
+  # ============================================================================
+  # CAMADA TRANSACIONAL
+  # ============================================================================
+  
+  TicketingSystemTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TicketingSystem
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+
+  LambdaDataPopulator:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-data-populator
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      CodeUri: python/lambda_populator/
+      Timeout: 15
+      MemorySize: 128
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TicketingSystemTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TicketingSystemTable
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  # ============================================================================
+  # CAMADA BRONZE (SOR - System of Record)
+  # ============================================================================
+
+  BronzeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub show-tickets-lake-bronze-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+        - Key: Layer
+          Value: bronze
+
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: show-tickets-bronze-stream-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: show-tickets-bronze-stream-s3-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BronzeBucket.Arn
+                  - !Sub ${BronzeBucket.Arn}/*
+
+  BronzeFirehose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: show-tickets-bronze-stream
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt BronzeBucket.Arn
+        Prefix: vendas_ingressos/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/
+        ErrorOutputPrefix: errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/
+        BufferingHints:
+          SizeInMBs: 1
+          IntervalInSeconds: 60
+        CompressionFormat: UNCOMPRESSED
+        RoleARN: !GetAtt FirehoseRole.Arn
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+
+  LambdaSalesFilterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-sales-filter-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lambda-sales-filter-permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource: !GetAtt TicketingSystemTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - firehose:PutRecord
+                  - firehose:PutRecordBatch
+                Resource: !GetAtt BronzeFirehose.Arn
+
+  # Lambda Filter conecta ao Firehose via SDK (firehose.put_record)
+  # Fluxo: DynamoDB Stream → Lambda Filter → Kinesis Firehose → S3 Bronze
+  LambdaSalesFilter:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: lambda-sales-filter
+      Runtime: python3.12
+      Handler: filter_function.lambda_handler
+      CodeUri: python/lambda_filter/
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt LambdaSalesFilterRole.Arn
+      Environment:
+        Variables:
+          FIREHOSE_NAME: !Ref BronzeFirehose
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt TicketingSystemTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  BronzeDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: bronze_db
+        Description: Bronze layer - raw data from DynamoDB
+
+  BronzeCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bronze-vendas-crawler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: bronze-vendas-crawler-s3-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BronzeBucket.Arn
+                  - !Sub ${BronzeBucket.Arn}/*
+
+  BronzeCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: bronze-vendas-crawler
+      Role: !GetAtt BronzeCrawlerRole.Arn
+      DatabaseName: !Ref BronzeDatabase
+      Schedule:
+        ScheduleExpression: cron(0 2 * * ? *)
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${BronzeBucket}/vendas_ingressos/
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  # ============================================================================
+  # CAMADA SILVER (SOT - Single Source of Truth)
+  # ============================================================================
+
+  SilverBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub show-tickets-lake-silver-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+        - Key: Layer
+          Value: silver
+
+  SilverDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: silver_db
+        Description: Silver layer - curated and deduplicated data
+
+  SilverJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: silver-transform-job-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: silver-transform-job-permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BronzeBucket.Arn
+                  - !Sub ${BronzeBucket.Arn}/*
+                  - !GetAtt SilverBucket.Arn
+                  - !Sub ${SilverBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - athena:*
+                  - glue:GetTable
+                  - glue:GetDatabase
+                  - glue:GetPartitions
+                Resource: '*'
+
+  SilverJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: silver-transform-job
+      Role: !GetAtt SilverJobRole.Arn
+      GlueVersion: '4.0'
+      MaxCapacity: 0.0625
+      Timeout: 10
+      Command:
+        Name: pythonshell
+        ScriptLocation: !Sub s3://${BronzeBucket}/glue-scripts/silver_transform.py
+        PythonVersion: '3.9'
+      DefaultArguments:
+        --job-language: python
+        --library-set: analytics
+        --database: !Ref BronzeDatabase
+        --table: vendas_ingressos
+        --output_path: !Sub s3://${SilverBucket}/vendas_ingressos/
+        --athena_output: !Sub s3://${BronzeBucket}/athena-results/
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  SilverJobTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: silver-transform-job-daily-trigger
+      Type: SCHEDULED
+      Schedule: cron(0 3 * * ? *)
+      Actions:
+        - JobName: !Ref SilverJob
+
+  SilverCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: silver-vendas-crawler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: silver-vendas-crawler-s3-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt SilverBucket.Arn
+                  - !Sub ${SilverBucket.Arn}/*
+
+  SilverCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: silver-vendas-crawler
+      Role: !GetAtt SilverCrawlerRole.Arn
+      DatabaseName: !Ref SilverDatabase
+      Schedule:
+        ScheduleExpression: cron(0 2 * * ? *)
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${SilverBucket}/vendas_ingressos/
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  # ============================================================================
+  # CAMADA GOLD (Aggregated & Materialized)
+  # ============================================================================
+
+  GoldBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub show-tickets-lake-gold-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+        - Key: Layer
+          Value: gold
+
+  GoldDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: gold_db
+        Description: Gold layer - aggregated and business-ready data
+
+  GoldJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gold-transform-job-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: gold-transform-job-permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt GoldBucket.Arn
+                  - !Sub ${GoldBucket.Arn}/*
+                  - !GetAtt SilverBucket.Arn
+                  - !Sub ${SilverBucket.Arn}/*
+                  - !GetAtt BronzeBucket.Arn
+                  - !Sub ${BronzeBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - athena:*
+                  - glue:*
+                Resource: '*'
+
+  GoldJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: gold-transform-job
+      Role: !GetAtt GoldJobRole.Arn
+      GlueVersion: '4.0'
+      MaxCapacity: 0.0625
+      Timeout: 10
+      Command:
+        Name: pythonshell
+        ScriptLocation: !Sub s3://${BronzeBucket}/glue-scripts/materialize_gold.py
+        PythonVersion: '3.9'
+      DefaultArguments:
+        --job-language: python
+        --library-set: analytics
+        --silver_database: !Ref SilverDatabase
+        --output_path: !Sub s3://${GoldBucket}/vendas_confirmadas/
+        --athena_output: !Sub s3://${GoldBucket}/athena-results/
+        --gold_database: !Ref GoldDatabase
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  GoldJobTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: gold-transform-job-daily-trigger
+      Type: SCHEDULED
+      Schedule: cron(0 4 * * ? *)
+      Actions:
+        - JobName: !Ref GoldJob
+
+  GoldCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gold-vendas-crawler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: gold-vendas-crawler-s3-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt GoldBucket.Arn
+                  - !Sub ${GoldBucket.Arn}/*
+
+  GoldCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: gold-vendas-crawler
+      Role: !GetAtt GoldCrawlerRole.Arn
+      DatabaseName: !Ref GoldDatabase
+      Schedule:
+        ScheduleExpression: cron(0 2 * * ? *)
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${GoldBucket}/vendas_ingressos/
+      Tags:
+        Environment: dev
+        Project: aws-data-lake
+
+  # ============================================================================
+  # CAMADA SPEC (Virtual Views - Custo Zero)
+  # ============================================================================
+
+  SpecDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: spec_db
+        Description: Spec layer - virtual views for business users
+
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: data-lake-workgroup
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub s3://${GoldBucket}/athena-query-results/
+      Tags:
+        - Key: Environment
+          Value: dev
+        - Key: Project
+          Value: aws-data-lake
+
+  SpecViewQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Name: create-vw_vendas_consolidadas_gold
+      Database: !Ref SpecDatabase
+      WorkGroup: !Ref AthenaWorkGroup
+      QueryString: |
+        CREATE OR REPLACE VIEW spec_db.vw_vendas_consolidadas_gold AS 
+        SELECT 
+          v.order_id, 
+          v.valor_total as valor_pago, 
+          v.status, 
+          v.show_id,
+          v.user_id,
+          v.ingestion_at as data_venda,
+          v.valor_total * 0.10 as comissao_plataforma 
+        FROM silver_db.vendas_ingressos v
+
+Outputs:
+  # Transacional
+  DynamoDBTableName:
+    Description: DynamoDB Table for Ticketing System
+    Value: !Ref TicketingSystemTable
+  
+  DynamoDBStreamArn:
+    Description: DynamoDB Stream ARN
+    Value: !GetAtt TicketingSystemTable.StreamArn
+  
+  # Bronze
+  BronzeBucketName:
+    Description: S3 Bucket for Bronze Layer
+    Value: !Ref BronzeBucket
+  
+  FirehoseName:
+    Description: Kinesis Firehose Delivery Stream
+    Value: !Ref BronzeFirehose
+  
+  BronzeDatabaseName:
+    Description: Glue Database for Bronze Layer
+    Value: !Ref BronzeDatabase
+  
+  BronzeCrawlerName:
+    Description: Glue Crawler for Bronze Layer
+    Value: !Ref BronzeCrawler
+  
+  # Silver
+  SilverBucketName:
+    Description: S3 Bucket for Silver Layer
+    Value: !Ref SilverBucket
+  
+  SilverDatabaseName:
+    Description: Glue Database for Silver Layer
+    Value: !Ref SilverDatabase
+  
+  SilverJobName:
+    Description: Glue Job for Silver Transformation
+    Value: !Ref SilverJob
+  
+  SilverCrawlerName:
+    Description: Glue Crawler for Silver Layer
+    Value: !Ref SilverCrawler
+  
+  # Gold
+  GoldBucketName:
+    Description: S3 Bucket for Gold Layer
+    Value: !Ref GoldBucket
+  
+  GoldDatabaseName:
+    Description: Glue Database for Gold Layer
+    Value: !Ref GoldDatabase
+  
+  GoldJobName:
+    Description: Glue Job for Gold Transformation
+    Value: !Ref GoldJob
+  
+  GoldCrawlerName:
+    Description: Glue Crawler for Gold Layer
+    Value: !Ref GoldCrawler
+  
+  # Spec
+  SpecDatabaseName:
+    Description: Glue Database for Spec Layer (Virtual Views)
+    Value: !Ref SpecDatabase
+  
+  AthenaWorkGroupName:
+    Description: Athena WorkGroup for Queries
+    Value: !Ref AthenaWorkGroup
+  
+  SpecViewQueryName:
+    Description: Athena Named Query for Spec View
+    Value: !Ref SpecViewQuery

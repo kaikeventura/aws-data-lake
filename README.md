@@ -22,6 +22,91 @@ Sistema de vendas de ingressos para shows que processa transações em tempo rea
 
 ## 🏗️ Arquitetura
 
+### Diagrama Interativo (Mermaid)
+
+```mermaid
+graph TB
+    subgraph TRANSACIONAL["🔵 CAMADA TRANSACIONAL"]
+        DDB[(DynamoDB<br/>TicketingSystem)]
+        Stream[DynamoDB Stream]
+        PopLambda[Lambda<br/>data-populator]
+        
+        PopLambda -->|INSERT| DDB
+        DDB -->|NEW_IMAGE| Stream
+    end
+    
+    subgraph BRONZE["🟤 CAMADA BRONZE - SOR"]
+        FilterLambda[Lambda<br/>sales-filter]
+        Firehose[Kinesis Firehose<br/>bronze-stream]
+        S3Bronze[(S3 Bronze<br/>JSON)]
+        CrawlerBronze[Glue Crawler<br/>bronze-vendas]
+        DBBronze[(Glue DB<br/>bronze_db)]
+        
+        Stream -->|Trigger| FilterLambda
+        FilterLambda -->|put_record| Firehose
+        Firehose -->|Partition by date| S3Bronze
+        S3Bronze -->|Scan| CrawlerBronze
+        CrawlerBronze -->|Catalog| DBBronze
+    end
+    
+    subgraph SILVER["⚪ CAMADA SILVER - SOT"]
+        JobSilver[Glue Job<br/>silver-transform]
+        S3Silver[(S3 Silver<br/>Parquet)]
+        CrawlerSilver[Glue Crawler<br/>silver-vendas]
+        DBSilver[(Glue DB<br/>silver_db)]
+        
+        DBBronze -->|Read| JobSilver
+        JobSilver -->|Dedup + Clean| S3Silver
+        S3Silver -->|Scan| CrawlerSilver
+        CrawlerSilver -->|Catalog| DBSilver
+    end
+    
+    subgraph GOLD["🟡 CAMADA GOLD - Aggregated"]
+        JobGold[Glue Job<br/>gold-transform]
+        S3Gold[(S3 Gold<br/>Parquet)]
+        CrawlerGold[Glue Crawler<br/>gold-vendas]
+        DBGold[(Glue DB<br/>gold_db)]
+        
+        DBSilver -->|Read| JobGold
+        JobGold -->|Filter + Calc| S3Gold
+        S3Gold -->|Scan| CrawlerGold
+        CrawlerGold -->|Catalog| DBGold
+    end
+    
+    subgraph SPEC["🌟 CAMADA SPEC - Virtual Views"]
+        DBSpec[(Glue DB<br/>spec_db)]
+        AthenaView[Athena View<br/>vw_vendas_consolidadas]
+        Athena[Amazon Athena<br/>Query Engine]
+        
+        DBSilver -.->|Virtual JOIN| AthenaView
+        AthenaView -->|Registered in| DBSpec
+        DBSpec -->|Query| Athena
+    end
+    
+    subgraph SCHEDULE["⏰ SCHEDULES"]
+        Cron2h[02:00 UTC<br/>Crawlers]
+        Cron3h[03:00 UTC<br/>Silver Job]
+        Cron4h[04:00 UTC<br/>Gold Job]
+        
+        Cron2h -.->|Trigger| CrawlerBronze
+        Cron2h -.->|Trigger| CrawlerSilver
+        Cron2h -.->|Trigger| CrawlerGold
+        Cron3h -.->|Trigger| JobSilver
+        Cron4h -.->|Trigger| JobGold
+    end
+    
+    Users[👥 Business Users] -->|SQL Queries| Athena
+    
+    style TRANSACIONAL fill:#e3f2fd
+    style BRONZE fill:#efebe9
+    style SILVER fill:#f5f5f5
+    style GOLD fill:#fff9c4
+    style SPEC fill:#e8f5e9
+    style SCHEDULE fill:#fce4ec
+```
+
+### Diagrama ASCII
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        CAMADA TRANSACIONAL                          │
@@ -294,6 +379,28 @@ Real-time - DynamoDB Stream → Lambda Filter → Firehose → S3 Bronze
 | Gold | ~2 horas | Diária às 4h UTC |
 | Spec | Instantânea | Query on-demand |
 
+### Timeline Diária (Gantt)
+
+```mermaid
+gantt
+    title 📅 Pipeline Diário de Processamento
+    dateFormat HH:mm
+    axisFormat %H:%M
+    
+    section Real-time
+    DynamoDB Stream → Lambda → Firehose → S3 Bronze :active, rt1, 00:00, 24h
+    
+    section Catalogação
+    Crawlers (Bronze, Silver, Gold) :crit, c1, 02:00, 30m
+    
+    section Transformação
+    Glue Job Silver (Bronze → Silver) :done, s1, 03:00, 1h
+    Glue Job Gold (Silver → Gold) :done, g1, 04:00, 1h
+    
+    section Consulta
+    Athena Views disponíveis 24/7 :active, a1, 00:00, 24h
+```
+
 **[ADICIONAR PRINT: CloudWatch Metrics mostrando latências]**
 
 ---
@@ -448,6 +555,19 @@ aws lambda invoke \
 ---
 
 ## 💰 Custos Estimados
+
+### 📊 Distribuição de Custos
+
+```mermaid
+pie title 💰 Estimativa de Custos Mensais (1M eventos)
+    "DynamoDB" : 10
+    "Lambda" : 2
+    "Kinesis Firehose" : 15
+    "S3 Storage" : 20
+    "Glue Crawlers" : 2
+    "Glue Jobs" : 3
+    "Athena Queries" : 10
+```
 
 ### 📊 Breakdown Mensal (1M eventos):
 
