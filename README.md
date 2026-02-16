@@ -97,12 +97,12 @@ graph TB
     
     Users[👥 Business Users] -->|SQL Queries| Athena
     
-    style TRANSACIONAL fill:#e3f2fd
-    style BRONZE fill:#efebe9
-    style SILVER fill:#f5f5f5
-    style GOLD fill:#fff9c4
-    style SPEC fill:#e8f5e9
-    style SCHEDULE fill:#fce4ec
+    style TRANSACIONAL fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#fff
+    style BRONZE fill:#78350f,stroke:#f59e0b,stroke-width:2px,color:#fff
+    style SILVER fill:#374151,stroke:#9ca3af,stroke-width:2px,color:#fff
+    style GOLD fill:#713f12,stroke:#fbbf24,stroke-width:2px,color:#fff
+    style SPEC fill:#14532d,stroke:#22c55e,stroke-width:2px,color:#fff
+    style SCHEDULE fill:#831843,stroke:#ec4899,stroke-width:2px,color:#fff
 ```
 
 ### Diagrama ASCII
