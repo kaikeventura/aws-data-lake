@@ -22,6 +22,35 @@ Sistema de vendas de ingressos para shows que processa transações em tempo rea
 
 ## 🏗️ Arquitetura
 
+### Diagrama ASCII
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        CAMADA TRANSACIONAL                          │
+│  DynamoDB (TicketingSystem) → DynamoDB Streams → Lambda Filter      │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                      CAMADA BRONZE (SOR - Raw)                      │
+│  Kinesis Firehose → S3 Bronze (JSON) → Glue Crawler → bronze_db     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CAMADA SILVER (SOT - Curated)                    │
+│  Glue Job (Dedup + Clean) → S3 Silver (Parquet) → silver_db         │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                  CAMADA GOLD (Spec - Aggregated)                    │
+│  Glue Job (Filter + Calc) → S3 Gold (Parquet) → gold_db             │
+└─────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│                    CAMADA SPEC (Virtual Views)                      │
+│              Athena Views → spec_db (Custo Zero)                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
 ### Diagrama Interativo (Mermaid)
 
 ```mermaid
@@ -105,37 +134,6 @@ graph TB
     style SCHEDULE fill:#831843,stroke:#ec4899,stroke-width:2px,color:#fff
 ```
 
-### Diagrama ASCII
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        CAMADA TRANSACIONAL                          │
-│  DynamoDB (TicketingSystem) → DynamoDB Streams → Lambda Filter     │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                      CAMADA BRONZE (SOR - Raw)                      │
-│  Kinesis Firehose → S3 Bronze (JSON) → Glue Crawler → bronze_db    │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                    CAMADA SILVER (SOT - Curated)                    │
-│  Glue Job (Dedup + Clean) → S3 Silver (Parquet) → silver_db        │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                  CAMADA GOLD (Spec - Aggregated)                    │
-│  Glue Job (Filter + Calc) → S3 Gold (Parquet) → gold_db            │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                    CAMADA SPEC (Virtual Views)                      │
-│              Athena Views → spec_db (Custo Zero)                    │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**[ADICIONAR PRINT: Diagrama de arquitetura completo do AWS Console]**
-
 ---
 
 ## 📊 Camadas do Data Lake
@@ -150,21 +148,21 @@ graph TB
   - SK: `ORDER#{uuid}` ou `TOUR#{uuid}#{year}`
   - Stream habilitado: `NEW_IMAGE`
 
-**[ADICIONAR PRINT: Tabela DynamoDB com dados de exemplo]**
+![img.png](prints/img.png)
 
 - **Lambda Filter:** `lambda-sales-filter`
   - Filtra apenas registros com `SK` começando em `ORDER#`
   - Adiciona metadados: `evento_tipo`, `ingestion_at`
   - Envia para Kinesis Firehose
 
-**[ADICIONAR PRINT: Código da Lambda Filter no console]**
+![img_1.png](prints/img_1.png)
 
 - **Kinesis Firehose:** `show-tickets-bronze-stream`
   - Buffer: 1MB ou 60 segundos
   - Formato: JSON (newline delimited)
   - Particionamento: `vendas_ingressos/year=YYYY/month=MM/day=DD/`
 
-**[ADICIONAR PRINT: Configuração do Kinesis Firehose]**
+![img_2.png](prints/img_2.png)
 
 - **S3 Bronze:** `show-tickets-lake-bronze-{id}`
   - Formato: JSON
@@ -178,14 +176,14 @@ graph TB
     │   │   │   └── *.json
     ```
 
-**[ADICIONAR PRINT: Estrutura de pastas no S3 Bronze]**
+![img_3.png](prints/img_3.png)
 
 - **Glue Crawler:** `bronze-vendas-crawler`
   - Schedule: Diário às 2h UTC
   - Database: `bronze_db`
   - Tabela: `vendas_ingressos`
 
-**[ADICIONAR PRINT: Configuração do Glue Crawler Bronze]**
+![img_4.png](prints/img_4.png)
 
 #### 📋 Schema Bronze:
 ```json
@@ -202,6 +200,9 @@ graph TB
 }
 ```
 
+![img_8.png](prints/img_8.png)
+![img_6.png](prints/img_6.png)
+
 ---
 
 ### 🥈 Camada Silver (SOT - Single Source of Truth)
@@ -214,7 +215,7 @@ graph TB
   - Schedule: Diário às 3h UTC (1h após crawler Bronze)
   - Biblioteca: `awswrangler` + `pandas`
 
-**[ADICIONAR PRINT: Configuração do Glue Job Silver]**
+![img_5.png](prints/img_5.png)
 
 #### 🔄 Transformações:
 1. **Deduplicação:** Remove duplicatas por `order_id`, mantendo registro mais recente
@@ -224,7 +225,7 @@ graph TB
    - Converte tipos: `valor_total` → float, `ingestion_at` → datetime
 3. **Particionamento:** `year`, `month`, `day` (baseado em `ingestion_at`)
 
-**[ADICIONAR PRINT: Logs do Glue Job mostrando transformações]**
+![img_12.png](prints/img_12.png)
 
 - **S3 Silver:** `show-tickets-lake-silver-{id}`
   - Formato: Parquet
@@ -238,14 +239,14 @@ graph TB
     │   │   │   └── *.snappy.parquet
     ```
 
-**[ADICIONAR PRINT: Estrutura de pastas no S3 Silver]**
+![img_7.png](prints/img_7.png)
 
 - **Glue Crawler:** `silver-vendas-crawler`
   - Schedule: Diário às 2h UTC
   - Database: `silver_db`
   - Tabela: `vendas_ingressos`
 
-**[ADICIONAR PRINT: Tabela Silver no Glue Catalog]**
+![img_10.png](prints/img_10.png)
 
 #### 📋 Schema Silver:
 | Coluna | Tipo | Descrição |
@@ -262,6 +263,10 @@ graph TB
 
 ---
 
+![img_9.png](prints/img_9.png)
+
+---
+
 ### 🥇 Camada Gold (Spec - Materializada)
 
 **Objetivo:** Dados agregados e otimizados para consumo por dashboards e BI.
@@ -272,7 +277,7 @@ graph TB
   - Schedule: Diário às 4h UTC (após Silver)
   - Biblioteca: `awswrangler` + `pandas`
 
-**[ADICIONAR PRINT: Configuração do Glue Job Gold]**
+![img_11.png](prints/img_11.png)
 
 #### 🔄 Transformações:
 1. **Filtro:** Apenas vendas com `status = 'CONFIRMED'`
@@ -281,8 +286,6 @@ graph TB
    - `nome_do_show`: Concatenação `'Show-' + show_id`
 3. **Particionamento:** `year`, `month`, `day` (data da venda confirmada)
 4. **MSCK REPAIR:** Atualiza partições automaticamente no Athena
-
-**[ADICIONAR PRINT: Query Athena mostrando dados Gold]**
 
 - **S3 Gold:** `show-tickets-lake-gold-{id}`
   - Formato: Parquet
@@ -296,14 +299,14 @@ graph TB
     │   │   │   └── *.snappy.parquet
     ```
 
-**[ADICIONAR PRINT: Estrutura de pastas no S3 Gold]**
+![img_15.png](prints/img_15.png)
 
 - **Glue Crawler:** `gold-vendas-crawler`
   - Schedule: Diário às 2h UTC
   - Database: `gold_db`
   - Tabela: `vendas_confirmadas`
 
-**[ADICIONAR PRINT: Tabela Gold no Glue Catalog]**
+![img_14.png](prints/img_14.png)
 
 #### 📋 Schema Gold:
 | Coluna | Tipo | Descrição |
@@ -322,6 +325,10 @@ graph TB
 
 ---
 
+![img_13.png](prints/img_13.png)
+
+---
+
 ### 🌟 Camada Spec (Virtual - Custo Zero)
 
 **Objetivo:** Views virtuais no Athena para acesso direto pelos times de negócio.
@@ -332,7 +339,7 @@ graph TB
   - View: `vw_vendas_consolidadas_gold`
   - Custo: Zero armazenamento (apenas query)
 
-**[ADICIONAR PRINT: View no Athena Query Editor]**
+![img_16.png](prints/img_16.png)
 
 #### 📋 SQL da View:
 ```sql
@@ -348,7 +355,7 @@ SELECT
 FROM silver_db.vendas_ingressos v
 ```
 
-**[ADICIONAR PRINT: Resultado da query na view Spec]**
+![img_17.png](prints/img_17.png)
 
 ---
 
@@ -369,15 +376,6 @@ Real-time - DynamoDB Stream → Lambda Filter → Firehose → S3 Bronze
           ↓
 24/7      - Athena Views disponíveis para consulta
 ```
-
-### 📈 Latência por Camada:
-
-| Camada | Latência | Atualização |
-|--------|----------|-------------|
-| Bronze | ~1-2 min | Real-time (Firehose buffer) |
-| Silver | ~1 hora | Diária às 3h UTC |
-| Gold | ~2 horas | Diária às 4h UTC |
-| Spec | Instantânea | Query on-demand |
 
 ### Timeline Diária (Gantt)
 
@@ -401,10 +399,6 @@ gantt
     Athena Views disponíveis 24/7 :active, a1, 00:00, 24h
 ```
 
-**[ADICIONAR PRINT: CloudWatch Metrics mostrando latências]**
-
----
-
 ## 🛠️ Componentes AWS
 
 ### 💾 Armazenamento:
@@ -414,7 +408,7 @@ gantt
   - Silver: `show-tickets-lake-silver-{id}`
   - Gold: `show-tickets-lake-gold-{id}`
 
-**[ADICIONAR PRINT: Lista de buckets S3]**
+![img_18.png](prints/img_18.png)
 
 ### ⚡ Processamento:
 - **Lambda Functions:**
@@ -425,7 +419,7 @@ gantt
   - `silver-transform-job`: Transformação Bronze → Silver
   - `gold-transform-job`: Transformação Silver → Gold
 
-**[ADICIONAR PRINT: Lista de Glue Jobs]**
+![img_19.png](prints/img_19.png)
 
 ### 📚 Catálogo:
 - **Glue Data Catalog:**
@@ -434,21 +428,14 @@ gantt
   - `gold_db`: Dados agregados (Parquet)
   - `spec_db`: Views virtuais
 
-**[ADICIONAR PRINT: Databases no Glue Catalog]**
+![img_20.png](prints/img_20.png)
 
 - **Glue Crawlers:**
   - `bronze-vendas-crawler`
   - `silver-vendas-crawler`
   - `gold-vendas-crawler`
 
-**[ADICIONAR PRINT: Lista de Crawlers]**
-
-### 🔍 Consulta:
-- **Amazon Athena:** Query engine SQL serverless
-  - Workgroup: `primary`
-  - Resultados: Armazenados em cada bucket
-
-**[ADICIONAR PRINT: Athena Query Editor com exemplo de consulta]**
+![img_21.png](prints/img_21.png)
 
 ---
 
@@ -475,16 +462,12 @@ terraform init
 terraform apply
 ```
 
-**[ADICIONAR PRINT: Output do terraform apply do bootstrap]**
-
 #### 3️⃣ Deploy da Infraestrutura:
 ```bash
 cd ../envs/dev
 terraform init
 terraform apply
 ```
-
-**[ADICIONAR PRINT: Output do terraform apply completo]**
 
 #### 4️⃣ Crie a View Spec (Manual):
 No console do Athena, execute:
@@ -501,8 +484,6 @@ SELECT
 FROM silver_db.vendas_ingressos v
 ```
 
-**[ADICIONAR PRINT: Execução da query de criação da view]**
-
 #### 5️⃣ Teste o Pipeline:
 ```bash
 # Invocar Lambda Populator para gerar dados
@@ -511,48 +492,6 @@ aws lambda invoke \
   --region us-east-1 \
   /tmp/response.json
 ```
-
-**[ADICIONAR PRINT: Response da invocação da Lambda]**
-
----
-
-## 📊 Monitoramento
-
-### 🔍 CloudWatch Logs:
-
-#### Lambda Filter:
-```
-/aws/lambda/lambda-sales-filter
-```
-**[ADICIONAR PRINT: Logs da Lambda Filter]**
-
-#### Glue Jobs:
-```
-/aws-glue/jobs/output
-/aws-glue/jobs/error
-```
-**[ADICIONAR PRINT: Logs do Glue Job Silver]**
-
-### 📈 Métricas Importantes:
-
-| Métrica | Componente | Alerta |
-|---------|------------|--------|
-| `IncomingRecords` | Kinesis Firehose | < 1 por 5 min |
-| `Duration` | Lambda Filter | > 30s |
-| `Errors` | Glue Jobs | > 0 |
-| `DataScanned` | Athena | > 10GB/dia |
-
-**[ADICIONAR PRINT: Dashboard CloudWatch com métricas]**
-
-### 🔔 Alarmes Recomendados:
-1. **Firehose Delivery Failures:** > 0
-2. **Lambda Errors:** > 5 em 5 minutos
-3. **Glue Job Failures:** > 0
-4. **S3 Bucket Size:** > 100GB (revisar retenção)
-
-**[ADICIONAR PRINT: Configuração de alarmes CloudWatch]**
-
----
 
 ## 💰 Custos Estimados
 
@@ -581,8 +520,6 @@ pie title 💰 Estimativa de Custos Mensais (1M eventos)
 | Glue Jobs | $2-3 | Python Shell (0.0625 DPU) |
 | Athena | $5-10 | Depende das queries |
 | **TOTAL** | **$29-62/mês** | Altamente escalável |
-
-**[ADICIONAR PRINT: AWS Cost Explorer com breakdown]**
 
 ### 💡 Dicas de Otimização:
 - ✅ Use particionamento para reduzir scan do Athena
@@ -624,16 +561,6 @@ pie title 💰 Estimativa de Custos Mensais (1M eventos)
 
 ---
 
-## 🤝 Contribuindo
-
-1. Fork o projeto
-2. Crie uma branch: `git checkout -b feature/nova-camada`
-3. Commit: `git commit -m 'feat: adiciona camada platinum'`
-4. Push: `git push origin feature/nova-camada`
-5. Abra um Pull Request
-
----
-
 ## 📝 Licença
 
 Este projeto está sob a licença MIT.
@@ -642,9 +569,7 @@ Este projeto está sob a licença MIT.
 
 ## 👥 Autores
 
-Desenvolvido com ❤️ para democratização de dados na AWS.
-
-**[ADICIONAR PRINT: Arquitetura final completa com todas as camadas]**
+Desenvolvido com ❤️ por https://github.com/kaikeventura
 
 ---
 
@@ -662,8 +587,4 @@ Desenvolvido com ❤️ para democratização de dados na AWS.
 ### ❌ Problema: Dados duplicados na Silver
 **Solução:** Verifique lógica de deduplicação por `order_id` + `ingestion_at`
 
-**[ADICIONAR PRINT: Exemplo de erro e solução no CloudWatch]**
-
 ---
-
-🎉 **Parabéns! Você tem um Data Lake completo rodando na AWS!** 🎉
