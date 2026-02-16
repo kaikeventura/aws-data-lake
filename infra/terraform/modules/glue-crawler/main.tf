@@ -1,5 +1,6 @@
 resource "aws_glue_catalog_database" "bronze" {
-  name = var.database_name
+  count = var.create_database ? 1 : 0
+  name  = var.database_name
 }
 
 resource "aws_iam_role" "glue_role" {
@@ -46,7 +47,7 @@ resource "aws_iam_role_policy" "glue_s3" {
 resource "aws_glue_crawler" "bronze" {
   name          = var.crawler_name
   role          = aws_iam_role.glue_role.arn
-  database_name = aws_glue_catalog_database.bronze.name
+  database_name = var.create_database ? aws_glue_catalog_database.bronze[0].name : var.database_name
   schedule      = "cron(0 2 * * ? *)"
 
   s3_target {

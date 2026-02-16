@@ -31,6 +31,8 @@ df = df.rename(columns={
     'sk': 'order_key'
 })
 
+df['user_id'] = df['user_id'].str.replace('USER#', '')
+
 if 'details' in df.columns:
     df['valor_total'] = df['details'].apply(lambda x: float(x.get('amount', 0)) if isinstance(x, dict) else 0)
     df['status'] = df['details'].apply(lambda x: x.get('status', '') if isinstance(x, dict) else '')

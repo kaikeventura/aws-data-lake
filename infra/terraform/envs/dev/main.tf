@@ -115,3 +115,44 @@ module "athena_view" {
   bronze_database  = module.glue_crawler.database_name
   silver_database  = module.glue_crawler_silver.database_name
 }
+
+module "s3_gold" {
+  source = "../../modules/s3-gold"
+
+  bucket_suffix = random_id.bucket_suffix.hex
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+    Layer       = "gold"
+  }
+}
+
+module "glue_job_gold" {
+  source = "../../modules/glue-job-gold"
+
+  job_name        = "gold-transform-job"
+  silver_database = module.glue_crawler_silver.database_name
+  gold_database   = "gold_db"
+  gold_bucket     = module.s3_gold.bucket_name
+  silver_bucket   = module.s3_silver.bucket_name
+  scripts_bucket  = module.s3_bronze.bucket_name
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+  }
+}
+
+module "glue_crawler_gold" {
+  source = "../../modules/glue-crawler"
+
+  crawler_name    = "gold-vendas-crawler"
+  database_name   = module.glue_job_gold.database_name
+  create_database = false
+  s3_target_path  = module.s3_gold.bucket_name
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+  }
+
+  depends_on = [module.glue_job_gold]
+}

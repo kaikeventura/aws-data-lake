@@ -41,3 +41,15 @@ output "silver_database_name" {
 output "spec_view_name" {
   value = module.athena_view.view_name
 }
+
+output "gold_bucket_name" {
+  value = module.s3_gold.bucket_name
+}
+
+output "gold_job_name" {
+  value = module.glue_job_gold.job_name
+}
+
+output "gold_database_name" {
+  value = module.glue_job_gold.database_name
+}
