@@ -94,3 +94,15 @@ module "glue_job" {
     Project     = "aws-data-lake"
   }
 }
+
+module "glue_crawler_silver" {
+  source = "../../modules/glue-crawler"
+
+  crawler_name    = "silver-vendas-crawler"
+  database_name   = "silver_db"
+  s3_target_path  = module.s3_silver.bucket_name
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+  }
+}

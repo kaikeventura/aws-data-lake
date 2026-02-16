@@ -32,15 +32,16 @@ df = df.rename(columns={
 })
 
 if 'details' in df.columns:
-    df['valor_total'] = pd.to_numeric(df['details'].str.extract(r'"Amount":\s*"([^"]+)"')[0], errors='coerce')
-    df['status'] = df['details'].str.extract(r'"Status":\s*"([^"]+)"')[0]
-    df['show_id'] = df['details'].str.extract(r'"ShowID":\s*"([^"]+)"')[0]
+    df['valor_total'] = df['details'].apply(lambda x: float(x.get('amount', 0)) if isinstance(x, dict) else 0)
+    df['status'] = df['details'].apply(lambda x: x.get('status', '') if isinstance(x, dict) else '')
+    df['show_id'] = df['details'].apply(lambda x: x.get('showid', '') if isinstance(x, dict) else '')
     df = df.drop(columns=['details'])
 
 df = df.drop(columns=['evento_tipo'], errors='ignore')
 
-df['ano_venda'] = df['ingestion_at'].dt.year
-df['mes_venda'] = df['ingestion_at'].dt.month
+df['year'] = df['ingestion_at'].dt.year
+df['month'] = df['ingestion_at'].dt.month
+df['day'] = df['ingestion_at'].dt.day
 
 wr.s3.to_parquet(
     df=df,
@@ -48,5 +49,5 @@ wr.s3.to_parquet(
     dataset=True,
     mode='overwrite',
     compression='snappy',
-    partition_cols=['ano_venda', 'mes_venda']
+    partition_cols=['year', 'month', 'day']
 )

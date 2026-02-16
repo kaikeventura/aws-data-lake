@@ -29,3 +29,11 @@ output "silver_bucket_name" {
 output "glue_job_name" {
   value = module.glue_job.job_name
 }
+
+output "silver_crawler_name" {
+  value = module.glue_crawler_silver.crawler_name
+}
+
+output "silver_database_name" {
+  value = module.glue_crawler_silver.database_name
+}
