@@ -7,7 +7,6 @@
 - [Fluxo de Dados](#-fluxo-de-dados)
 - [Componentes AWS](#-componentes-aws)
 - [Deploy](#-deploy)
-- [Monitoramento](#-monitoramento)
 
 ---
 
