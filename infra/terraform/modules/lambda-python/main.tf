@@ -19,7 +19,7 @@ data "archive_file" "lambda_zip" {
 }
 
 resource "aws_iam_role" "lambda_exec_role" {
-  name = "lambda-exec-role"
+  name = "lambda-data-populator-role"
 
   assume_role_policy = jsonencode({
     Version   = "2012-10-17",
@@ -63,7 +63,7 @@ resource "aws_iam_role_policy" "dynamodb_access" {
 }
 
 resource "aws_lambda_function" "python_lambda" {
-  function_name    = "MyPythonLambda"
+  function_name    = "lambda-data-populator"
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.12"
   role             = aws_iam_role.lambda_exec_role.arn

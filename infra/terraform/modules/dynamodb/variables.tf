@@ -3,6 +3,12 @@ variable "table_name" {
   type        = string
 }
 
+variable "stream_enabled" {
+  description = "Enable or disable DynamoDB Streams"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "A map of tags to assign to the resource."
   type        = map(string)
