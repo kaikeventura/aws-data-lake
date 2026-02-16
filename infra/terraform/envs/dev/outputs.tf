@@ -13,3 +13,11 @@ output "filter_lambda_name" {
 output "dynamodb_stream_arn" {
   value = module.dynamodb.stream_arn
 }
+
+output "glue_crawler_name" {
+  value = module.glue_crawler.crawler_name
+}
+
+output "glue_database_name" {
+  value = module.glue_crawler.database_name
+}

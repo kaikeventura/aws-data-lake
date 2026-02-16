@@ -57,3 +57,7 @@ build/
 .project
 infra/terraform/bootstrap/.terraform.lock.hcl
 infra/terraform/envs/dev/.terraform.lock.hcl
+/python/lambda_filter/package/
+/python/lambda_populator/package/
+/python/lambda_populator/lambda.zip
+/python/lambda_filter/lambda.zip

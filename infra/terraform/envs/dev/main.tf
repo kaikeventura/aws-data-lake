@@ -56,3 +56,15 @@ module "lambda_filter" {
     Project     = "aws-data-lake"
   }
 }
+
+module "glue_crawler" {
+  source = "../../modules/glue-crawler"
+
+  crawler_name    = "bronze-vendas-crawler"
+  database_name   = "bronze_db"
+  s3_target_path  = module.s3_bronze.bucket_name
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+  }
+}
