@@ -68,3 +68,29 @@ module "glue_crawler" {
     Project     = "aws-data-lake"
   }
 }
+
+module "s3_silver" {
+  source = "../../modules/s3-silver"
+
+  bucket_suffix = random_id.bucket_suffix.hex
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+    Layer       = "silver"
+  }
+}
+
+module "glue_job" {
+  source = "../../modules/glue-job"
+
+  job_name       = "silver-transform-job"
+  database_name  = module.glue_crawler.database_name
+  table_name     = "vendas_ingressos"
+  bronze_bucket  = module.s3_bronze.bucket_name
+  silver_bucket  = module.s3_silver.bucket_name
+  scripts_bucket = module.s3_bronze.bucket_name
+  tags = {
+    Environment = "dev"
+    Project     = "aws-data-lake"
+  }
+}
