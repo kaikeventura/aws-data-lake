@@ -2,7 +2,7 @@ resource "null_resource" "install_dependencies" {
   count = var.enable_build ? 1 : 0
 
   provisioner "local-exec" {
-    command = "pip install -r ${abspath(path.module)}/../../../../python/requirements.txt -t ${abspath(path.module)}/../../../../python/package && cp ${abspath(path.module)}/../../../../python/*.py ${abspath(path.module)}/../../../../python/package/"
+    command = "pip install -r ${abspath(path.module)}/../../../../python/lambda_populator/requirements.txt -t ${abspath(path.module)}/../../../../python/lambda_populator/package && cp ${abspath(path.module)}/../../../../python/lambda_populator/*.py ${abspath(path.module)}/../../../../python/lambda_populator/package/"
   }
 
   triggers = {
@@ -12,8 +12,8 @@ resource "null_resource" "install_dependencies" {
 
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "${abspath(path.module)}/../../../../python/package"
-  output_path = "${abspath(path.module)}/../../../../python/lambda.zip"
+  source_dir  = "${abspath(path.module)}/../../../../python/lambda_populator/package"
+  output_path = "${abspath(path.module)}/../../../../python/lambda_populator/lambda.zip"
 
   depends_on  = [null_resource.install_dependencies]
 }

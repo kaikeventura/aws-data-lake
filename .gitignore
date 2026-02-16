@@ -55,3 +55,5 @@ build/
 .settings/
 .classpath
 .project
+infra/terraform/bootstrap/.terraform.lock.hcl
+infra/terraform/envs/dev/.terraform.lock.hcl
