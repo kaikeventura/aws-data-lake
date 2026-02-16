@@ -37,3 +37,7 @@ output "silver_crawler_name" {
 output "silver_database_name" {
   value = module.glue_crawler_silver.database_name
 }
+
+output "spec_view_name" {
+  value = module.athena_view.view_name
+}

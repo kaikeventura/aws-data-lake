@@ -106,3 +106,12 @@ module "glue_crawler_silver" {
     Project     = "aws-data-lake"
   }
 }
+
+module "athena_view" {
+  source = "../../modules/athena-view"
+
+  view_name        = "vw_vendas_consolidadas_gold"
+  database_name    = "spec_db"
+  bronze_database  = module.glue_crawler.database_name
+  silver_database  = module.glue_crawler_silver.database_name
+}
