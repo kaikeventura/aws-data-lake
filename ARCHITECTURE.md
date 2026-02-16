@@ -4,7 +4,7 @@
 
 ```mermaid
 graph TB
-    subgraph TRANSACIONAL["🔵 CAMADA TRANSACIONAL"]
+    subgraph TRANSACIONAL["🔵 TRANSACIONAL"]
         DDB[(DynamoDB<br/>TicketingSystem)]
         Stream[DynamoDB Stream]
         PopLambda[Lambda<br/>data-populator]
@@ -13,7 +13,7 @@ graph TB
         DDB -->|NEW_IMAGE| Stream
     end
     
-    subgraph BRONZE["🟤 CAMADA BRONZE - SOR"]
+    subgraph BRONZE["🟤 BRONZE / SOR"]
         FilterLambda[Lambda<br/>sales-filter]
         Firehose[Kinesis Firehose<br/>bronze-stream]
         S3Bronze[(S3 Bronze<br/>JSON)]
@@ -27,7 +27,7 @@ graph TB
         CrawlerBronze -->|Catalog| DBBronze
     end
     
-    subgraph SILVER["⚪ CAMADA SILVER - SOT"]
+    subgraph SILVER["⚪ SILVER / SOT"]
         JobSilver[Glue Job<br/>silver-transform]
         S3Silver[(S3 Silver<br/>Parquet)]
         CrawlerSilver[Glue Crawler<br/>silver-vendas]
@@ -39,7 +39,7 @@ graph TB
         CrawlerSilver -->|Catalog| DBSilver
     end
     
-    subgraph GOLD["🟡 CAMADA GOLD - Aggregated"]
+    subgraph GOLD["🟡 GOLD / SPEC"]
         JobGold[Glue Job<br/>gold-transform]
         S3Gold[(S3 Gold<br/>Parquet)]
         CrawlerGold[Glue Crawler<br/>gold-vendas]
@@ -51,7 +51,7 @@ graph TB
         CrawlerGold -->|Catalog| DBGold
     end
     
-    subgraph SPEC["🌟 CAMADA SPEC - Virtual Views"]
+    subgraph SPEC["🌟 SPEC / VIRTUAL"]
         DBSpec[(Glue DB<br/>spec_db)]
         AthenaView[Athena View<br/>vw_vendas_consolidadas]
         Athena[Amazon Athena<br/>Query Engine]
